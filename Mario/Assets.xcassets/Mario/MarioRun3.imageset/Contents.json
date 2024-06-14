@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "marioSmall_running2.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

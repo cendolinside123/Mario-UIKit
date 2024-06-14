@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "tile_adminium.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
