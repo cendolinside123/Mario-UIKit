@@ -7,8 +7,7 @@
 
 import Foundation
 
-
-indirect enum MoveType {
+indirect enum MoveType: Equatable {
     case Left
     case Right
     case Jump

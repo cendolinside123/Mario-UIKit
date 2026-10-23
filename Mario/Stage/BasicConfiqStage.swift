@@ -10,6 +10,8 @@ import UIKit
 import RxSwift
 import RxCocoa
 
+typealias BasicConfigStage = BasicConfiqStage
+
 protocol MarioMovingRule {
     func doMoveLeft()
     func doMoveRight()
@@ -17,68 +19,145 @@ protocol MarioMovingRule {
     func stillFall()
 }
 
-
 class BasicConfiqStage: UIViewController {
+    
+    // MARK: - Core Mario Character
     let marioChar: Mario = Mario()
     
-    private let stackViewBtnArrow: UIStackView = {
+    // MARK: - Game Controls UI
+    let stackViewBtnArrow: UIStackView = {
         let stackView = UIStackView()
         stackView.axis = .horizontal
         stackView.alignment = .fill
         stackView.distribution = .fillEqually
-        stackView.spacing = 10
+        stackView.spacing = 14
+        stackView.isMultipleTouchEnabled = true
         return stackView
     }()
     
-    private let btnLeft: UIButton = {
-        let button = UIButton()
-        button.backgroundColor = .gray
-        button.setTitle("<--", for: .normal)
-        button.setTitleColor(.black, for: .normal)
+    let btnLeft: UIButton = {
+        let button = UIButton(type: .system)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        button.setTitle("◀", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        button.layer.cornerRadius = 16
+        button.layer.borderColor = UIColor.white.withAlphaComponent(0.3).cgColor
+        button.layer.borderWidth = 1.5
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.25
+        button.layer.shadowOffset = CGSize(width: 0, height: 2)
+        button.layer.shadowRadius = 4
+        button.isExclusiveTouch = false
         return button
     }()
     
-    private let btnRight: UIButton = {
-        let button = UIButton()
-        button.backgroundColor = .gray
-        button.setTitle("-->", for: .normal)
-        button.setTitleColor(.black, for: .normal)
+    let btnRight: UIButton = {
+        let button = UIButton(type: .system)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        button.setTitle("▶", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        button.layer.cornerRadius = 16
+        button.layer.borderColor = UIColor.white.withAlphaComponent(0.3).cgColor
+        button.layer.borderWidth = 1.5
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.25
+        button.layer.shadowOffset = CGSize(width: 0, height: 2)
+        button.layer.shadowRadius = 4
+        button.isExclusiveTouch = false
         return button
     }()
     
-    private let btnJump: UIButton = {
-        let button = UIButton()
-        button.backgroundColor = .gray
-        button.setTitle("Jump", for: .normal)
-        button.setTitleColor(.black, for: .normal)
+    let btnJump: UIButton = {
+        let button = UIButton(type: .system)
+        button.backgroundColor = UIColor(red: 0.88, green: 0.20, blue: 0.20, alpha: 0.8)
+        button.setTitle("JUMP", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .black)
+        button.layer.cornerRadius = 16
+        button.layer.borderColor = UIColor.white.withAlphaComponent(0.4).cgColor
+        button.layer.borderWidth = 1.5
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.3
+        button.layer.shadowOffset = CGSize(width: 0, height: 2)
+        button.layer.shadowRadius = 4
+        button.isExclusiveTouch = false
         return button
     }()
     
+    // MARK: - Stage & Collision State
+    var viewLimit: [RectInfo] = []
+    weak var stageContainerView: UIView?
     
+    // MARK: - Reactive Movement State
+    let bag: DisposeBag = DisposeBag()
+    let marioMoveAct: PublishSubject<MoveType> = PublishSubject()
+    var currentMoveType: MoveType = .Idle
     
-    private var viewLimit: [RectInfo] = []
-    
-    private var curentMoveType: MoveType = .Idle
-    
-    private let bag: DisposeBag = DisposeBag()
-    private let marioMoveAct: PublishSubject<MoveType> = PublishSubject()
-    private var gravityAct: Disposable?
-    
-    private weak var timerLongPressButton: Timer?
-    private weak var doJumpAction: Timer?
-    private var countJump: Int = 0
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        
-        allMarioActions()
-        regisButtonAction()
+    var curentMoveType: MoveType {
+        get { return currentMoveType }
+        set { currentMoveType = newValue }
     }
     
+    // MARK: - Physics & Engine Properties
+    private var displayLink: CADisplayLink?
+    private var lastTimestamp: CFTimeInterval = 0.0
+    
+    private var isLeftInputActive: Bool = false
+    private var isRightInputActive: Bool = false
+    private var isJumpInputActive: Bool = false
+    
+    private var velocityX: CGFloat = 0.0
+    private var velocityY: CGFloat = 0.0
+    private var isGrounded: Bool = false
+    private var isJumping: Bool = false
+    private var coyoteTimer: TimeInterval = 0.0
+    
+    // Physics Constants
+    private let walkSpeed: CGFloat = 180.0             // points/second
+    private let acceleration: CGFloat = 950.0          // points/second^2
+    private let friction: CGFloat = 1100.0             // points/second^2
+    private let jumpSpeed: CGFloat = -420.0            // instantaneous upward velocity
+    private let minJumpCutoffSpeed: CGFloat = -160.0   // early release variable jump cutoff
+    private let gravity: CGFloat = 1100.0              // downward acceleration
+    private let terminalVelocity: CGFloat = 550.0      // max fall speed
+    private let coyoteDuration: TimeInterval = 0.08    // edge jump grace window
+    
+    // Haptics
+    private let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    
+    // MARK: - Lifecycle
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.isMultipleTouchEnabled = true
+        setupButtonActions()
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startPhysicsLoop()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopPhysicsLoop()
+    }
+    
+    deinit {
+        stopPhysicsLoop()
+    }
+    
+    // MARK: - Public Configuration
     func configureMario(positionX: Int, positionY: Int, container: UIView) {
+        stageContainerView = container
         container.addSubview(marioChar)
-        marioChar.frame = CGRect(x: positionX, y: positionY - (65 + 1), width: 50, height: 65)
+        marioChar.frame = CGRect(x: CGFloat(positionX), y: CGFloat(positionY - (65 + 1)), width: 50, height: 65)
         marioChar.layoutIfNeeded()
+        isGrounded = true
+        velocityX = 0.0
+        velocityY = 0.0
+        coyoteTimer = coyoteDuration
     }
     
     func setupController() {
@@ -90,571 +169,440 @@ class BasicConfiqStage: UIViewController {
         stackViewBtnArrow.translatesAutoresizingMaskIntoConstraints = false
         btnJump.translatesAutoresizingMaskIntoConstraints = false
         
-        stackViewBtnArrow.heightAnchor.constraint(equalToConstant: 60).isActive = true
-        stackViewBtnArrow.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        stackViewBtnArrow.leadingAnchor.constraint(equalTo: self.view.leadingAnchor, constant: 50).isActive = true
-        stackViewBtnArrow.bottomAnchor.constraint(equalTo: self.view.bottomAnchor, constant: -50).isActive = true
-        
-        btnJump.heightAnchor.constraint(equalToConstant: 60).isActive = true
-        btnJump.widthAnchor.constraint(equalToConstant: 60).isActive = true
-        btnJump.trailingAnchor.constraint(equalTo: self.view.trailingAnchor, constant: -50).isActive = true
-        btnJump.bottomAnchor.constraint(equalTo: self.view.bottomAnchor, constant: -50).isActive = true
+        NSLayoutConstraint.activate([
+            stackViewBtnArrow.heightAnchor.constraint(equalToConstant: 64),
+            stackViewBtnArrow.widthAnchor.constraint(equalToConstant: 160),
+            stackViewBtnArrow.leadingAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.leadingAnchor, constant: 32),
+            stackViewBtnArrow.bottomAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            
+            btnJump.heightAnchor.constraint(equalToConstant: 64),
+            btnJump.widthAnchor.constraint(equalToConstant: 72),
+            btnJump.trailingAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.trailingAnchor, constant: -32),
+            btnJump.bottomAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
+        ])
     }
     
-}
-
-extension BasicConfiqStage {
-    private func allMarioActions() {
-        marioMoveAct
-            .observe(on: MainScheduler.instance)
-            .map({ [weak self] (moveType) -> (MoveType, (Double, Double, CGFloat, CGFloat)) in
-                guard let superSelf = self else {
-                    throw CustomError.UnknowError
-                }
-                
-                let marioInfo = superSelf.marioChar
-                
-                return (moveType, (marioInfo.frame.origin.x, marioInfo.frame.origin.y, marioInfo.frame.height, marioInfo.frame.width))
-            })
-            .observe(on: ConcurrentDispatchQueueScheduler.init(qos: .background))
-            .filter({ [weak self] (moveType, arg1) in
-                
-                let (xMario, yMario, heightMario, widthMario) = arg1
-                return self?.doMove(xMario: xMario, yMario: yMario, heightMario: heightMario, widthMario: widthMario, moveType: moveType) ?? false
-            })
-            .observe(on: MainScheduler.instance)
-            .subscribe(onNext: { [weak self] (moveType, arg1) in
-                switch moveType {
-                case .Left:
-                    self?.doMoveLeft()
-                case .Right:
-                    self?.doMoveRight()
-                case .Idle:
-                    self?.doIdle()
-                case .Jump:
-                    self?.doJump()
-                case .JumpMove(let dir):
-                    self?.doJump()
-                    switch dir {
-                    case .Left:
-                        self?.doMoveLeft()
-                    case .Right:
-                        self?.doMoveRight()
-                    default:
-                        break
-                    }
-                case .Fall:
-                    self?.stillFall()
-                case .FallMove(let dir):
-                    self?.stillFall()
-                    switch dir {
-                    case .Left:
-                        self?.doMoveLeft()
-                    case .Right:
-                        self?.doMoveRight()
-                    default:
-                        break
-                    }
-                }
-                self?.curentMoveType = moveType
-            })
-            .disposed(by: bag)
-        
-        
-        gravityAct = Observable<Int>
-            .interval(.milliseconds(50), scheduler: MainScheduler.instance)
-            .observe(on: ConcurrentDispatchQueueScheduler.init(qos: .background))
-            .filter({ [weak self] _ in
-                
-                guard let getStatus = self?.curentMoveType else {
-                    return true
-                }
-                
-                switch getStatus {
-                case .Jump:
-                    return false
-                case .JumpMove(_):
-                    return false
-                default:
-                    return true
-                }
-            })
-            .observe(on: MainScheduler.instance)
-            .map({ [weak self] (_) -> (Double, Double, CGFloat, CGFloat) in
-                guard let superSelf = self else {
-                    throw CustomError.UnknowError
-                }
-                
-                let marioInfo = superSelf.marioChar
-                
-                return (marioInfo.frame.origin.x, marioInfo.frame.origin.y, marioInfo.frame.height, marioInfo.frame.width)
-            })
-            .observe(on: ConcurrentDispatchQueueScheduler.init(qos: .background))
-            .filter({ [weak self] arg in
-                print("do check gravity")
-                let (xMario, yMario, heightMario, widthMario) = arg
-                return self?.detectGravity(xMario: xMario, yMario: yMario, heightMario: heightMario, widthMario: widthMario) ?? false
-            })
-            .observe(on: MainScheduler.instance)
-            .subscribe(onNext: { [weak self] _ in
-                self?.marioChar.frame.origin.y += 1
-                
-            })
-        gravityAct?.disposed(by: bag)
-    }
-    
-    private func regisButtonAction() {
-        let longPressLeftGestureRecognizer = UILongPressGestureRecognizer(target: self, action: #selector(holdMoveLeft))
-        longPressLeftGestureRecognizer.minimumPressDuration = 0.01
-        btnLeft.addGestureRecognizer(longPressLeftGestureRecognizer)
-        btnLeft.addTarget(self, action: #selector(moveLeft), for: .touchDown)
-        
-        let longPressRightGestureRecognizer = UILongPressGestureRecognizer(target: self, action: #selector(holdMoveRight))
-        longPressRightGestureRecognizer.minimumPressDuration = 0.01
-        btnRight.addGestureRecognizer(longPressRightGestureRecognizer)
-        btnRight.addTarget(self, action: #selector(moveRight), for: .touchDown)
-        
-        btnJump.addTarget(self, action: #selector(doJumping), for: .touchDown)
-    }
-    
-}
-
-extension BasicConfiqStage {
-    func initColition(listRect: [RectInfo]) {
+    func initCollision(listRect: [RectInfo]) {
         viewLimit = listRect
     }
     
+    func initColition(listRect: [RectInfo]) {
+        initCollision(listRect: listRect)
+    }
+    
     func doIdle() {
+        isLeftInputActive = false
+        isRightInputActive = false
+        velocityX = 0
         marioChar.resetPosition()
     }
 }
 
-extension BasicConfiqStage: MarioMovingRule {
-    func doMoveLeft() {
-        marioChar.frame.origin.x -= 1
+// MARK: - Game Loop & Physics Simulation
+private extension BasicConfiqStage {
+    
+    func startPhysicsLoop() {
+        guard displayLink == nil else { return }
+        lastTimestamp = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(physicsStep(link:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+    
+    func stopPhysicsLoop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+    
+    @objc func physicsStep(link: CADisplayLink) {
+        let currentTime = CACurrentMediaTime()
+        var dt = currentTime - lastTimestamp
+        lastTimestamp = currentTime
         
-        if !marioChar.isLeftStatus() {
-            marioChar.togglePosition()
-            marioChar.transform = CGAffineTransform(scaleX: -1, y: 1)
+        // Prevent spiral of death / teleportation on frame drops
+        if dt > 0.033 {
+            dt = 0.033
+        } else if dt < 0.001 {
+            dt = 0.001
         }
         
-        marioChar.doWalking()
+        updatePhysics(dt: dt)
+    }
+    
+    func updatePhysics(dt: TimeInterval) {
+        guard marioChar.superview != nil else { return }
+        
+        let delta = CGFloat(dt)
+        
+        // 1. Horizontal Acceleration & Friction
+        if isLeftInputActive && !isRightInputActive {
+            velocityX = max(velocityX - acceleration * delta, -walkSpeed)
+            marioChar.setFacingDirection(.left)
+        } else if isRightInputActive && !isLeftInputActive {
+            velocityX = min(velocityX + acceleration * delta, walkSpeed)
+            marioChar.setFacingDirection(.right)
+        } else {
+            // Apply friction towards 0
+            if velocityX > 0 {
+                velocityX = max(0, velocityX - friction * delta)
+            } else if velocityX < 0 {
+                velocityX = min(0, velocityX + friction * delta)
+            }
+        }
+        
+        // 2. Vertical Gravity
+        if !isGrounded {
+            velocityY += gravity * delta
+            if velocityY > terminalVelocity {
+                velocityY = terminalVelocity
+            }
+            if coyoteTimer > 0 {
+                coyoteTimer -= dt
+            }
+        } else {
+            coyoteTimer = coyoteDuration
+        }
+        
+        // 3. Resolve Collisions against Stage Bounds & Obstacles
+        resolveCollisions(dt: delta)
+        
+        // 4. Update Animations & State
+        marioChar.updateMovementAnimation(
+            isMoving: abs(velocityX) > 10.0,
+            isGrounded: isGrounded,
+            deltaTime: dt
+        )
+        
+        updateMoveTypeState()
+    }
+    
+    func resolveCollisions(dt: CGFloat) {
+        var currentFrame = marioChar.frame
+        
+        // Determine Stage Boundaries
+        var stageBounds = stageContainerView?.bounds ?? (marioChar.superview?.bounds ?? self.view.bounds)
+        for item in viewLimit where item.type == .Background {
+            stageBounds = CGRect(x: 0, y: 0, width: item.rect.width, height: item.rect.height)
+            break
+        }
+        
+        let solidObstacles = viewLimit.filter { $0.type == .HardItem || $0.type == .SemiHardItem }
+        
+        // --- HORIZONTAL RESOLUTION (X-Axis) ---
+        let deltaX = velocityX * dt
+        var nextX = currentFrame.origin.x + deltaX
+        
+        // Clamp to left/right stage walls
+        let minX = stageBounds.minX
+        let maxX = stageBounds.maxX - currentFrame.width
+        if nextX < minX {
+            nextX = minX
+            velocityX = 0
+        } else if nextX > maxX {
+            nextX = maxX
+            velocityX = 0
+        }
+        
+        // Test horizontal collisions with solid obstacles (HardItem)
+        // Inset vertically by 4 points so standing on top of an obstacle doesn't cause a side collision
+        let xHitBox = CGRect(x: nextX, y: currentFrame.origin.y + 4, width: currentFrame.width, height: currentFrame.height - 8)
+        for obstacle in solidObstacles where obstacle.type == .HardItem {
+            if xHitBox.intersects(obstacle.rect) {
+                if deltaX > 0 { // Moving Right -> hit left wall of obstacle
+                    nextX = min(nextX, obstacle.rect.minX - currentFrame.width)
+                    velocityX = 0
+                } else if deltaX < 0 { // Moving Left -> hit right wall of obstacle
+                    nextX = max(nextX, obstacle.rect.maxX)
+                    velocityX = 0
+                }
+            }
+        }
+        currentFrame.origin.x = nextX
+        
+        // --- VERTICAL RESOLUTION (Y-Axis) ---
+        let deltaY = velocityY * dt
+        var nextY = currentFrame.origin.y + deltaY
+        var landed = false
+        
+        // Ground floor collision
+        let floorY = stageBounds.maxY - currentFrame.height
+        if nextY >= floorY {
+            nextY = floorY
+            velocityY = 0
+            landed = true
+        }
+        
+        // Test vertical collisions with obstacles (landing on top or bonking head)
+        // Inset horizontally by 3 points so Mario doesn't snag while brushing against the side
+        let yHitBox = CGRect(x: currentFrame.origin.x + 3, y: nextY, width: currentFrame.width - 6, height: currentFrame.height)
+        for obstacle in solidObstacles {
+            if yHitBox.intersects(obstacle.rect) {
+                if obstacle.type == .HardItem {
+                    // Moving Upwards -> bonk ceiling
+                    if deltaY < 0 && currentFrame.origin.y >= obstacle.rect.maxY - 8 {
+                        nextY = obstacle.rect.maxY
+                        velocityY = 0
+                    }
+                    // Moving Downwards -> land on top
+                    else if deltaY >= 0 && currentFrame.maxY <= obstacle.rect.minY + max(14.0, deltaY + 4.0) {
+                        nextY = obstacle.rect.minY - currentFrame.height
+                        velocityY = 0
+                        landed = true
+                    }
+                } else if obstacle.type == .SemiHardItem {
+                    // SemiHardItem: only land from above
+                    if deltaY >= 0 && currentFrame.maxY <= obstacle.rect.minY + max(14.0, deltaY + 4.0) {
+                        nextY = obstacle.rect.minY - currentFrame.height
+                        velocityY = 0
+                        landed = true
+                    }
+                }
+            }
+        }
+        
+        currentFrame.origin.y = min(nextY, floorY)
+        marioChar.frame = currentFrame
+        
+        // Check grounded status & edge walk-off
+        if landed {
+            isGrounded = true
+            isJumping = false
+        } else {
+            // If we didn't land this frame, check if Mario is still resting on an obstacle or floor
+            if isGrounded && velocityY == 0 {
+                let checkFeetBox = CGRect(x: currentFrame.minX + 4, y: currentFrame.maxY, width: currentFrame.width - 8, height: 2)
+                var hasSolidGround = (currentFrame.maxY >= floorY - 0.5)
+                if !hasSolidGround {
+                    for obstacle in solidObstacles {
+                        if checkFeetBox.intersects(obstacle.rect) {
+                            hasSolidGround = true
+                            break
+                        }
+                    }
+                }
+                if !hasSolidGround {
+                    // Walked off an edge!
+                    isGrounded = false
+                }
+            } else {
+                isGrounded = false
+            }
+        }
+    }
+    
+    func updateMoveTypeState() {
+        let newMoveType: MoveType
+        
+        if isGrounded {
+            if velocityX > 10.0 {
+                newMoveType = .Right
+            } else if velocityX < -10.0 {
+                newMoveType = .Left
+            } else {
+                newMoveType = .Idle
+            }
+        } else {
+            let horizontalDir: MoveType?
+            if velocityX > 10.0 {
+                horizontalDir = .Right
+            } else if velocityX < -10.0 {
+                horizontalDir = .Left
+            } else {
+                horizontalDir = nil
+            }
+            
+            if velocityY < 0 {
+                if let dir = horizontalDir {
+                    newMoveType = .JumpMove(dir: dir)
+                } else {
+                    newMoveType = .Jump
+                }
+            } else {
+                if let dir = horizontalDir {
+                    newMoveType = .FallMove(dir: dir)
+                } else {
+                    newMoveType = .Fall
+                }
+            }
+        }
+        
+        if newMoveType != currentMoveType {
+            currentMoveType = newMoveType
+            marioMoveAct.onNext(newMoveType)
+        }
+    }
+}
+
+// MARK: - Input & Touch Handling
+extension BasicConfiqStage {
+    
+    private func setupButtonActions() {
+        btnLeft.addTarget(self, action: #selector(leftButtonDown), for: [.touchDown, .touchDragEnter])
+        btnLeft.addTarget(self, action: #selector(leftButtonUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        
+        btnRight.addTarget(self, action: #selector(rightButtonDown), for: [.touchDown, .touchDragEnter])
+        btnRight.addTarget(self, action: #selector(rightButtonUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        
+        btnJump.addTarget(self, action: #selector(jumpButtonDown), for: .touchDown)
+        btnJump.addTarget(self, action: #selector(jumpButtonUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+    }
+    
+    @objc private func leftButtonDown() {
+        isLeftInputActive = true
+        animateButtonPress(btnLeft, isPressed: true)
+    }
+    
+    @objc private func leftButtonUp() {
+        isLeftInputActive = false
+        animateButtonPress(btnLeft, isPressed: false)
+    }
+    
+    @objc private func rightButtonDown() {
+        isRightInputActive = true
+        animateButtonPress(btnRight, isPressed: true)
+    }
+    
+    @objc private func rightButtonUp() {
+        isRightInputActive = false
+        animateButtonPress(btnRight, isPressed: false)
+    }
+    
+    @objc private func jumpButtonDown() {
+        isJumpInputActive = true
+        animateButtonPress(btnJump, isPressed: true)
+        performJump()
+    }
+    
+    @objc private func jumpButtonUp() {
+        isJumpInputActive = false
+        animateButtonPress(btnJump, isPressed: false)
+        endVariableJump()
+    }
+    
+    private func animateButtonPress(_ button: UIButton, isPressed: Bool) {
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+            button.transform = isPressed ? CGAffineTransform(scaleX: 0.92, y: 0.92) : .identity
+            button.alpha = isPressed ? 0.75 : 1.0
+        }, completion: nil)
+    }
+    
+    func performJump() {
+        // Can jump if on ground or within coyote time
+        if isGrounded || coyoteTimer > 0 {
+            velocityY = jumpSpeed
+            isGrounded = false
+            isJumping = true
+            coyoteTimer = 0
+            marioChar.doJumping()
+            impactFeedback.impactOccurred()
+        }
+    }
+    
+    func endVariableJump() {
+        // If releasing jump early while still ascending rapidly, cut jump height for responsive short hops
+        if velocityY < minJumpCutoffSpeed {
+            velocityY = minJumpCutoffSpeed
+        }
+    }
+    
+    // MARK: - Backward-Compatible Selectors
+    @objc func moveLeft() {
+        isLeftInputActive = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.isLeftInputActive = false
+        }
+    }
+    
+    @objc func holdMoveLeft(gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            isLeftInputActive = true
+        case .ended, .cancelled, .failed:
+            isLeftInputActive = false
+        default:
+            break
+        }
+    }
+    
+    @objc func moveRight() {
+        isRightInputActive = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.isRightInputActive = false
+        }
+    }
+    
+    @objc func holdMoveRight(gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            isRightInputActive = true
+        case .ended, .cancelled, .failed:
+            isRightInputActive = false
+        default:
+            break
+        }
+    }
+    
+    @objc func doJumping() {
+        performJump()
+    }
+}
+
+// MARK: - Hardware & Simulator Keyboard Support
+extension BasicConfiqStage {
+    
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key else { continue }
+            switch key.keyCode {
+            case .keyboardLeftArrow, .keyboardA:
+                isLeftInputActive = true
+            case .keyboardRightArrow, .keyboardD:
+                isRightInputActive = true
+            case .keyboardUpArrow, .keyboardSpacebar, .keyboardW:
+                performJump()
+            default:
+                super.pressesBegan(presses, with: event)
+            }
+        }
+    }
+    
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key else { continue }
+            switch key.keyCode {
+            case .keyboardLeftArrow, .keyboardA:
+                isLeftInputActive = false
+            case .keyboardRightArrow, .keyboardD:
+                isRightInputActive = false
+            case .keyboardUpArrow, .keyboardSpacebar, .keyboardW:
+                endVariableJump()
+            default:
+                super.pressesEnded(presses, with: event)
+            }
+        }
+    }
+}
+
+// MARK: - MarioMovingRule Protocol Conformance
+extension BasicConfiqStage: MarioMovingRule {
+    
+    func doMoveLeft() {
+        velocityX = -walkSpeed
+        marioChar.setFacingDirection(.left)
     }
     
     func doMoveRight() {
-        marioChar.frame.origin.x += 1
-        
-        if marioChar.isLeftStatus() {
-            marioChar.togglePosition()
-            marioChar.transform = CGAffineTransform(scaleX: 1, y: 1)
-        }
-        
-        marioChar.doWalking()
+        velocityX = walkSpeed
+        marioChar.setFacingDirection(.right)
     }
     
     func doJump() {
-        marioChar.frame.origin.y -= 1
-        marioChar.doJumping()
+        performJump()
     }
     
     func stillFall() {
-        marioChar.doJumping()
-    }
-}
-
-extension BasicConfiqStage {
-    @objc private func moveLeft() {
-        
-        switch curentMoveType {
-        case .Left:
-            marioMoveAct.onNext(.Left)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: { [weak self] in
-                self?.marioMoveAct.onNext(.Idle)
-            })
-        case .Jump:
-            marioMoveAct.onNext(.JumpMove(dir: .Left))
-        case .JumpMove(dir: _):
-            marioMoveAct.onNext(.JumpMove(dir: .Left))
-        case .Fall:
-            marioMoveAct.onNext(.FallMove(dir: .Left))
-        case .FallMove(dir: _):
-            marioMoveAct.onNext(.FallMove(dir: .Left))
-        case .Idle:
-            marioMoveAct.onNext(.Left)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: { [weak self] in
-                self?.marioMoveAct.onNext(.Idle)
-            })
-        default:
-            break
+        if isGrounded {
+            isGrounded = false
         }
-    }
-    
-    @objc private func holdMoveLeft(gesture: UILongPressGestureRecognizer) {
-        
-        print("holdMoveLeft \(gesture.state)")
-        
-        if gesture.state == .began {
-            timerLongPressButton?.invalidate()
-            timerLongPressButton = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
-                guard let self = self else {
-                    timer.invalidate()
-                    return
-                }
-                switch self.curentMoveType {
-                case .Left:
-                    self.marioMoveAct.onNext(.Left)
-                case .Jump:
-                    self.marioMoveAct.onNext(.JumpMove(dir: .Left))
-                case .JumpMove(dir: _):
-                    self.marioMoveAct.onNext(.JumpMove(dir: .Left))
-                case .Fall:
-                    self.marioMoveAct.onNext(.FallMove(dir: .Left))
-                case .FallMove(dir: _):
-                    self.marioMoveAct.onNext(.FallMove(dir: .Left))
-                case .Idle:
-                    self.marioMoveAct.onNext(.Left)
-                default:
-                    break
-                }
-            }
-        } else if gesture.state == .ended || gesture.state == .cancelled {
-            timerLongPressButton?.invalidate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: { [weak self] in
-                guard let self = self else {
-                    return
-                }
-                
-                switch self.curentMoveType {
-                case .Fall:
-                    break
-                case .FallMove(_):
-                    break
-                case .Jump:
-                    break
-                case .JumpMove(_):
-                    break
-                default:
-                    self.marioMoveAct.onNext(.Idle)
-                }
-            })
-        }
-    }
-    
-    @objc private func moveRight() {
-        
-        switch curentMoveType {
-        case .Right:
-            marioMoveAct.onNext(.Right)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: { [weak self] in
-                self?.marioMoveAct.onNext(.Idle)
-            })
-        case .Jump:
-            marioMoveAct.onNext(.JumpMove(dir: .Right))
-        case .JumpMove(dir: _):
-            marioMoveAct.onNext(.JumpMove(dir: .Right))
-        case .Fall:
-            marioMoveAct.onNext(.FallMove(dir: .Right))
-        case .FallMove(dir: _):
-            marioMoveAct.onNext(.FallMove(dir: .Right))
-        case .Idle:
-            marioMoveAct.onNext(.Right)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: { [weak self] in
-                self?.marioMoveAct.onNext(.Idle)
-            })
-        default:
-            break
-        }
-    }
-    
-    @objc private func holdMoveRight(gesture: UILongPressGestureRecognizer) {
-        
-        print("holdMoveRight \(gesture.state)")
-        
-        if gesture.state == .began {
-            timerLongPressButton?.invalidate()
-            timerLongPressButton = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
-                guard let self = self else {
-                    timer.invalidate()
-                    return
-                }
-                switch self.curentMoveType {
-                case .Right:
-                    self.marioMoveAct.onNext(.Right)
-                case .Jump:
-                    self.marioMoveAct.onNext(.JumpMove(dir: .Right))
-                case .JumpMove(dir: _):
-                    self.marioMoveAct.onNext(.JumpMove(dir: .Right))
-                case .Fall:
-                    self.marioMoveAct.onNext(.FallMove(dir: .Right))
-                case .FallMove(dir: _):
-                    self.marioMoveAct.onNext(.FallMove(dir: .Right))
-                case .Idle:
-                    self.marioMoveAct.onNext(.Right)
-                default:
-                    break
-                }
-            }
-        } else if gesture.state == .ended || gesture.state == .cancelled {
-            timerLongPressButton?.invalidate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: { [weak self] in
-                guard let self = self else {
-                    return
-                }
-                
-                switch self.curentMoveType {
-                case .Fall:
-                    break
-                case .FallMove(_):
-                    break
-                case .Jump:
-                    break
-                case .JumpMove(_):
-                    break
-                default:
-                    self.marioMoveAct.onNext(.Idle)
-                }
-            })
-        }
-        
-    }
-    
-    @objc private func doJumping() {
-        
-        if doJumpAction != nil {
-            return
-        }
-        var countHeight: Int = 0
-        doJumpAction = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
-            guard let self = self else {
-                timer.invalidate()
-                return
-            }
-            
-            countHeight += 1
-            
-            switch self.curentMoveType {
-            case .JumpMove(let dir):
-                self.marioMoveAct.onNext(.JumpMove(dir: dir))
-            default:
-                self.marioMoveAct.onNext(.Jump)
-            }
-            
-            if countHeight == 25 {
-                doJumpAction?.invalidate()
-                doJumpAction = nil
-                self.marioMoveAct.onNext(.Fall)
-            }
-            
-        }
-    }
-}
-
-extension BasicConfiqStage {
-    
-    private func doMove(xMario: Double,
-                        yMario: Double,
-                        heightMario: CGFloat,
-                        widthMario: CGFloat,
-                        moveType: MoveType) -> Bool {
-        var status: Bool = false
-        switch moveType {
-        case .Left:
-            for item in self.viewLimit {
-                if item.type == .Background {
-                    if (xMario - 1) < item.rect.origin.x {
-                        return false
-                    } else {
-                        status = true
-                    }
-                } else {
-                    if item.type == .HardItem {
-                        
-                        if Int(xMario - 1) == Int(item.rect.origin.x + item.rect.width) {
-                            let isTouch = CGRectIntersectsRect(CGRect(x: xMario, y: yMario, width: widthMario, height: heightMario), item.rect)
-                            if  isTouch {
-                                return false
-                            }
-                            status = true
-                        } else {
-                            status = true
-                        }
-                    }
-                }
-            }
-        case .Right:
-            for item in self.viewLimit {
-                if item.type == .Background {
-                    if ((xMario + widthMario) + 1) > item.rect.width {
-                        return false
-                    } else {
-                        status = true
-                    }
-                } else {
-                    if item.type == .HardItem {
-                        print("move right (xMario + widthMario) + 1): \((xMario + widthMario) + 1) item.rect.origin.x: \(item.rect.origin.x)")
-                        if ((xMario + widthMario) + 1) == item.rect.origin.x {
-                            let isTouch = CGRectIntersectsRect(CGRect(x: xMario, y: yMario, width: widthMario, height: heightMario), item.rect)
-                            if  isTouch {
-                                return false
-                            }
-                            return false
-                        } else {
-                            status = true
-                        }
-                    }
-//                    status = true
-                }
-            }
-        case .Jump:
-            for item in self.viewLimit {
-                if item.type == .Background {
-                    if Int(yMario - 1) < Int(item.rect.origin.y) {
-                        return false
-                    } else {
-                        status = true
-                    }
-                } else {
-                    status = true
-                }
-            }
-        case .JumpMove(let direction):
-            
-            for item in self.viewLimit {
-                if item.type == .Background {
-                    if Int(yMario - 1) < Int(item.rect.origin.y) {
-                        return false
-                    } else {
-                        status = true
-                    }
-                } else {
-                    status = true
-                }
-            }
-            
-            switch direction {
-            case .Left:
-                for item in self.viewLimit {
-                    if item.type == .Background {
-                        if (xMario - 1) < item.rect.origin.x {
-                            return false
-                        } else {
-                            status = true
-                        }
-                    } else {
-                        if item.type == .HardItem {
-                            
-                            if Int(xMario - 1) == Int(item.rect.origin.x + item.rect.width) {
-                                let isTouch = CGRectIntersectsRect(CGRect(x: xMario, y: yMario, width: widthMario, height: heightMario), item.rect)
-                                if  isTouch {
-                                    return false
-                                }
-                                status = true
-                            } else {
-                                status = true
-                            }
-                        }
-                    }
-                }
-            case .Right:
-                for item in self.viewLimit {
-                    if item.type == .Background {
-                        if ((xMario + widthMario) + 1) > item.rect.width {
-                            return false
-                        } else {
-                            status = true
-                        }
-                    } else {
-                        
-                        if item.type == .HardItem {
-                            
-                            if ((xMario + widthMario) + 1) > item.rect.origin.x {
-                                let isTouch = CGRectIntersectsRect(CGRect(x: xMario, y: yMario, width: widthMario, height: heightMario), item.rect)
-                                if  isTouch {
-                                    return false
-                                }
-                                status = true
-                            } else {
-                                status = true
-                            }
-                        }
-                    }
-                }
-            default:
-                break
-            }
-        case .Idle:
-            status = true
-        case .Fall:
-            status = true
-        case .FallMove(_):
-            status = true
-        }
-        
-        return status
-    }
-    
-    private func detectGravity(xMario: Double,
-                               yMario: Double,
-                               heightMario: CGFloat,
-                               widthMario: CGFloat) -> Bool {
-        for item in self.viewLimit {
-            if item.type == .Background {
-                if Int((yMario + 65) + 1) >= Int(item.rect.height) {
-                    
-                    
-                    switch curentMoveType {
-                    case .Fall:
-                        DispatchQueue.main.async { [weak self] in
-                            self?.marioChar.endJump()
-                        }
-                        self.marioMoveAct.onNext(.Idle)
-                    case .FallMove(_):
-                        DispatchQueue.main.async { [weak self] in
-                            self?.marioChar.endJump()
-                        }
-                        self.marioMoveAct.onNext(.Idle)
-                    default:
-                        break
-                    }
-                    
-                    return false
-                } else {
-                }
-            } else {
-                if item.type == .HardItem {
-                    let isTouch = CGRectIntersectsRect(CGRect(x: xMario, y: yMario, width: widthMario, height: heightMario), item.rect)
-                    
-                    if isTouch {
-                        switch curentMoveType {
-                        case .Fall:
-                            DispatchQueue.main.async { [weak self] in
-                                self?.marioChar.endJump()
-                            }
-                            self.marioMoveAct.onNext(.Idle)
-                        case .FallMove(_):
-                            DispatchQueue.main.async { [weak self] in
-                                self?.marioChar.endJump()
-                            }
-                            self.marioMoveAct.onNext(.Idle)
-                        default:
-                            print("fall status: \(curentMoveType)")
-                            break
-                        }
-                        
-                        return false
-                    } else {
-                    }
-                }
-            }
-        }
-        
-        switch curentMoveType {
-        case .FallMove(let dir):
-            self.marioMoveAct.onNext(.FallMove(dir: dir))
-        default:
-            self.marioMoveAct.onNext(.Fall)
-        }
-        
-        return true
     }
 }

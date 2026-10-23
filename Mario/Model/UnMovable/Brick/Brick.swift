@@ -11,30 +11,29 @@ class Brick: UIView {
     
     private let hitBoxView: UIView = {
         let view = UIView()
-        view.backgroundColor = UIColor(white: 1, alpha: 0.001)
+        view.backgroundColor = .clear
         return view
     }()
     
     private let softHitBoxView: UIView = {
         let view = UIView()
-        view.backgroundColor = UIColor(white: 1, alpha: 0.001)
+        view.backgroundColor = .clear
         return view
     }()
     
     private let brickImg: UIImageView = {
         let imageView = UIImageView()
-        imageView.backgroundColor = UIColor(white: 1, alpha: 0.001)
+        imageView.backgroundColor = .clear
+        imageView.contentMode = .scaleAspectFit
         imageView.image = UIImage(named: "Brick")
+        imageView.layer.magnificationFilter = .nearest
+        imageView.layer.minificationFilter = .nearest
         return imageView
     }()
-
-    /*
-    // Only override draw() if you perform custom drawing.
-    // An empty implementation adversely affects performance during animation.
-    override func draw(_ rect: CGRect) {
-        // Drawing code
+    
+    override var intrinsicContentSize: CGSize {
+        return CGSize(width: 32, height: 32)
     }
-    */
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -44,37 +43,36 @@ class Brick: UIView {
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        setupView()
+        setupConstraints()
     }
     
     private func setupView() {
-        self.backgroundColor = UIColor(white: 1, alpha: 0.001)
+        self.backgroundColor = .clear
         self.addSubview(hitBoxView)
         self.addSubview(softHitBoxView)
         self.addSubview(brickImg)
     }
     
     private func setupConstraints() {
-        let views: [String: Any] = ["hitBoxView": hitBoxView,
-                                          "brickImg": brickImg,
-                                    "softHitBoxView": softHitBoxView]
-        var constraints: [NSLayoutConstraint] = []
-        
         hitBoxView.translatesAutoresizingMaskIntoConstraints = false
         softHitBoxView.translatesAutoresizingMaskIntoConstraints = false
-        let h_hitBoxView = "H:|-0-[hitBoxView]-0-|"
-        let h_softHitBoxView = "H:|-0-[softHitBoxView]-0-|"
-        let v_hitBoxContent = "V:|-0-[hitBoxView]-0-[softHitBoxView]-0-|"
-        constraints += NSLayoutConstraint.constraints(withVisualFormat: h_hitBoxView, options: .alignAllTop, metrics: nil, views: views)
-        constraints += NSLayoutConstraint.constraints(withVisualFormat: h_softHitBoxView, options: .alignAllTop, metrics: nil, views: views)
-        constraints += NSLayoutConstraint.constraints(withVisualFormat: v_hitBoxContent, options: .alignAllLeading, metrics: nil, views: views)
-        
         brickImg.translatesAutoresizingMaskIntoConstraints = false
-        let h_brickImg = "H:|-0-[brickImg]-0-|"
-        let v_brickImg = "V:|-0-[brickImg]-0-|"
-        constraints += NSLayoutConstraint.constraints(withVisualFormat: h_brickImg, options: .alignAllTop, metrics: nil, views: views)
-        constraints += NSLayoutConstraint.constraints(withVisualFormat: v_brickImg, options: .alignAllLeading, metrics: nil, views: views)
         
-        NSLayoutConstraint.activate(constraints)
+        NSLayoutConstraint.activate([
+            hitBoxView.topAnchor.constraint(equalTo: self.topAnchor),
+            hitBoxView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+            hitBoxView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
+            
+            softHitBoxView.topAnchor.constraint(equalTo: hitBoxView.bottomAnchor),
+            softHitBoxView.bottomAnchor.constraint(equalTo: self.bottomAnchor),
+            softHitBoxView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+            softHitBoxView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
+            
+            brickImg.topAnchor.constraint(equalTo: self.topAnchor),
+            brickImg.bottomAnchor.constraint(equalTo: self.bottomAnchor),
+            brickImg.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+            brickImg.trailingAnchor.constraint(equalTo: self.trailingAnchor)
+        ])
     }
-
 }
